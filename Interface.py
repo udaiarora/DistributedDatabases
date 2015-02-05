@@ -15,6 +15,9 @@ def getopenconnection(user='postgres', password='1234', dbname='dds_assgn1'):
 
 def loadratings(ratingsfilepath, openconnection):
     cur = openconnection.cursor()
+    #Drop the table if its there
+    cur.execute("DROP TABLE IF EXISTS "+RATINGS_TABLE_NAME+";")
+
     # Create The Ratings Table if it doesnt exists
     cur.execute("CREATE TABLE IF NOT EXISTS "+ RATINGS_TABLE_NAME +" (UserID integer, MovieID integer, Rating float);")
     # Insert the ratings
@@ -24,7 +27,7 @@ def loadratings(ratingsfilepath, openconnection):
             cur.execute("INSERT INTO Ratings (UserID, MovieID, Rating) VALUES (%s, %s, %s)",(splitArr[0],splitArr[1],splitArr[2]))
     
 
-    rangepartition(RATINGS_TABLE_NAME, 5, openconnection)
+    roundrobinpartition(RATINGS_TABLE_NAME, 5, openconnection)
     # cur.execute("INSERT INTO Ratings (UserID, MovieID, Rating) VALUES (%s, %s, %s)",(24, 55, 2.5))
     # cur.execute("SELECT * FROM Ratings;")
     # row= cur.fetchone()[0]
@@ -33,6 +36,13 @@ def loadratings(ratingsfilepath, openconnection):
 
 def rangepartition(ratingstablename, numberofpartitions, openconnection):
     cur = openconnection.cursor()
+
+    #Delete The tables if they exist:
+    cur.execute("DROP TABLE IF EXISTS RangePartitionTableNHolder;")
+    for i in range(0,numberofpartitions):
+        cur.execute("DROP TABLE IF EXISTS RangePartitionTable%s;",[i])
+
+
     cur.execute("CREATE TABLE IF NOT EXISTS RangePartitionTableNHolder (N integer);")
     cur.execute("INSERT INTO RangePartitionTableNHolder (N) VALUES (%s)",[numberofpartitions])
 
@@ -61,12 +71,46 @@ def rangepartition(ratingstablename, numberofpartitions, openconnection):
     rangeinsert(RATINGS_TABLE_NAME,112233,4,0.5,openconnection)
 
    
+
+
+
+
 def roundrobinpartition(ratingstablename, numberofpartitions, openconnection):
-    pass
+    cur = openconnection.cursor()
+
+    #Delete The tables if they exist:
+    cur.execute("DROP TABLE IF EXISTS RRTableStartCountHolder;")
+    for i in range(0,numberofpartitions):
+        cur.execute("DROP TABLE IF EXISTS RRPartitionTable%s;",[i])
+
+    cur.execute("SELECT * FROM Ratings;")
+    allResults=cur.fetchall()
+    
+    count=0;
+    for result in allResults:
+        curCount=count%numberofpartitions
+        cur.execute("CREATE TABLE IF NOT EXISTS RRPartitionTable%s (UserID integer, MovieID integer, Rating float);",[curCount])
+        cur.execute("INSERT INTO RRPartitionTable%s (UserID, MovieID, Rating) VALUES (%s, %s, %s)",(curCount,result[0],result[1],result[2]))
+        count+=1
+
+    cur.execute("CREATE TABLE IF NOT EXISTS RRTableStartCountHolder (Last integer);")
+    cur.execute("INSERT INTO RRTableStartCountHolder (Last) VALUES (%s)",[count+1])
+    print "RoundRobin Partition Execution Completed"
+            
+           
+
+
+
+
 
 
 def roundrobininsert(ratingstablename, userid, itemid, rating, openconnection):
     pass
+
+
+
+
+
 
 
 def rangeinsert(ratingstablename, userid, itemid, rating, openconnection):
