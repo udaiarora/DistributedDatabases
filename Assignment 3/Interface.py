@@ -16,7 +16,7 @@ def getopenconnection(user='postgres', password='1234', dbname='dds_assgn1'):
 
 
 
-def loadratings(ratingstablename, ratingsfilepath, openconnection):
+def startProg(ratingstablename, ratingsfilepath, openconnection):
     cur = openconnection.cursor()
 
     #Drop the table if its there
@@ -26,73 +26,55 @@ def loadratings(ratingstablename, ratingsfilepath, openconnection):
     cur.execute("CREATE TABLE IF NOT EXISTS "+ RATINGS_TABLE_NAME +" (UserID integer, MovieID integer, Rating float);")
 
     # Insert the ratings
-    with open(ratingsfilepath) as RatingsFile:
-        for line in RatingsFile:
-            splitArr=line.split("::")
-            cur.execute("INSERT INTO Ratings (UserID, MovieID, Rating) VALUES (%s, %s, %s)",(splitArr[0],splitArr[1],splitArr[2]))
-    print "Ratings Loaded Successfully. Check Database Now!"
-    ParallelSort(ratingstablename, "Rating", "SortedResults", openconnection);
-
-
-
-
-# def rangepartition(ratingstablename, numberofpartitions, SortingColumnName, openconnection):
-#     cur = openconnection.cursor()
-
-#     for i in range(1,numberofpartitions+1):
-#         cur.execute("DROP TABLE IF EXISTS rangepartitiontable%s;",[i])
-
-#     cur.execute("SELECT * FROM tempiptable;")
-#     allResults=cur.fetchall();
+    # with open(ratingsfilepath) as RatingsFile:
+    #     for line in RatingsFile:
+    #         splitArr=line.split("::")
+    #         cur.execute("INSERT INTO Ratings (UserID, MovieID, Rating) VALUES (%s, %s, %s)",(splitArr[0],splitArr[1],splitArr[2]))
+    # print "Ratings Loaded Successfully. Check Database Now!"
     
-#     for result in allResults:
-#         currRat = float(5.0/numberofpartitions)
-#         count=1;
-    
-#         inserted=False
-#         while currRat<=MAX_RATING:
-#             if result[2]<=currRat:
-#                 cur.execute("CREATE TABLE IF NOT EXISTS rangepartitiontable%s (UserID integer, MovieID integer, Rating float);",[count])
-#                 cur.execute("INSERT INTO rangepartitiontable%s (UserID, MovieID, Rating) VALUES (%s, %s, %s)",(count,result[0],result[1],result[2]))
-#                 inserted=True
-#                 break
-#             else:
-#                 count+=1
-#                 currRat=currRat + float(5.0/numberofpartitions)
-#         if not inserted:
-#             cur.execute("CREATE TABLE IF NOT EXISTS rangepartitiontable%s (UserID integer, MovieID integer, Rating float);",[MAX_RATING])
-#             cur.execute("INSERT INTO rangepartitiontable%s (UserID, MovieID, Rating) VALUES (%s, %s, %s)",(MAX_RATING,result[0],result[1],result[2]))
-
-#     print "RangePartition Execution Completed Successfully. Check Database Now!"
 
 
+    # ParallelSort("t1", "c1", "SortedResults", openconnection);
+    # ParallelJoin("t1","t2","c1","c2","JoinedResults",openconnection);
+
+# Library Function taken from http://code.activestate.com/recipes/52293/
+def fields(cursor):
+    '''
+    This fuction takes a DB API 2.0 cursor object that has been executed and returns a dictionary of the field names and column numbers.  Field names are the key, column numbers are the value.
+    This lets you do a simple cursor_row[field_dict[fieldname]] to get the value of the column.
+    Returns dictionary
+    '''
+    results = {}
+    column = 0
+    for d in cursor.description:
+        results[d[0]] = column
+        column = column + 1
+
+    return results      
 
 
-def rangepartition(ratingstablename, numberofpartitions, SortingColumnName, openconnection):
+
+
+def rangepartition(tablename, numberofpartitions, SortingColumnName, minval, maxval, opprefix, openconnection):
     cur = openconnection.cursor()
 
     for i in range(1, numberofpartitions+1):
-        cur.execute("DROP TABLE IF EXISTS rangepartitiontable%s;",[i])
-        cur.execute("CREATE TABLE rangepartitiontable%s AS SELECT * FROM tempiptable where 1=0",[i])
+        cur.execute("DROP TABLE IF EXISTS "+opprefix+"rangepartitiontable%s;",[i])
+        cur.execute("CREATE TABLE "+opprefix+"rangepartitiontable%s AS SELECT * FROM "+tablename+" where 1=0",[i])
 
-    cur.execute("SELECT * FROM tempiptable;")
+    cur.execute("SELECT * FROM "+tablename+";")
     allResults=cur.fetchall();
 
-    cur.execute("SELECT MAX("+SortingColumnName+") FROM tempiptable")
-    maxval=cur.fetchall()[0][0];
-    cur.execute("SELECT MIN("+SortingColumnName+") FROM tempiptable")
-    minval=cur.fetchall()[0][0];
-
     incr=(maxval-minval)/numberofpartitions
+    ind= fields(cur)[SortingColumnName]
     
     for result in allResults:
         currRat = minval + incr
         count=1
         # inserted=False
-
         while currRat<=maxval:
-            if result[2]<=currRat:
-                cur.execute("INSERT INTO rangepartitiontable%s VALUES %s",(count,result))
+            if result[ind]<=currRat:
+                cur.execute("INSERT INTO "+opprefix+"rangepartitiontable%s VALUES %s",(count,result))
                 # inserted=True
                 break
             else:
@@ -101,7 +83,7 @@ def rangepartition(ratingstablename, numberofpartitions, SortingColumnName, open
             # if not inserted:
             #     cur.execute("INSERT INTO rangepartitiontable%s VALUES %s",(numberofpartitions,result))
 
-    print "RangePartition Execution Completed Successfully. Check Database Now!"
+    print "RangePartition Execution Completed Successfully."
 
 
 
@@ -121,7 +103,6 @@ def parsort(i, Table, SortingColumnName, OutputTable, openconnection):
         cur.execute("INSERT INTO "+OutputTable+"  VALUES %s",[row])
         openconnection.commit()
 
-    print "Sort Done", i
     l.release()
 
     
@@ -137,13 +118,74 @@ def ParallelSort(Table, SortingColumnName, OutputTable, openconnection):
     cur.execute("DROP TABLE IF EXISTS "+OutputTable)
     cur.execute("CREATE TABLE "+OutputTable+" AS SELECT * FROM tempiptable where 1=0")
 
-    rangepartition("tempiptable", 5, SortingColumnName, openconnection)
+    cur.execute("SELECT MAX("+SortingColumnName+") FROM tempiptable")
+    maxval=cur.fetchall()[0][0];
+    cur.execute("SELECT MIN("+SortingColumnName+") FROM tempiptable")
+    minval=cur.fetchall()[0][0];
+
+    rangepartition("tempiptable", 5, SortingColumnName, minval, maxval, "", openconnection)
 
     threads = []
     for i in range(1, 6):
         t = threading.Thread(target=parsort, args=(i, Table, SortingColumnName, OutputTable, openconnection,))
         threads.append(t)
         t.start()
+    print "Parallel Sort Done. Check SortedReults Table for results"
+
+
+
+
+l2=threading.Lock()
+        
+def parjoin(i, pre1, pre2, InputTable1, InputTable2, Table1JoinColumn, Table2JoinColumn, OutputTable, openconnection):
+
+    cur = openconnection.cursor()
+    cur.execute("SELECT * from "+pre1+"rangepartitiontable%s JOIN "+pre2+"rangepartitiontable%s ON "+pre1+"rangepartitiontable%s."+Table1JoinColumn+" = "+pre2+"rangepartitiontable%s."+Table2JoinColumn+"",[i,i,i,i])
+    data = cur.fetchall()
+
+    l2.acquire()
+    for row in data:
+        # print row[0],row[1],row[2],row[3]
+        cur.execute("INSERT INTO "+OutputTable+"  VALUES %s",[row])
+        openconnection.commit()
+
+    l2.release()
+
+
+
+
+def ParallelJoin(InputTable1, InputTable2, Table1JoinColumn, Table2JoinColumn, OutputTable, openconnection):
+    cur = openconnection.cursor()
+
+    cur.execute("DROP TABLE IF EXISTS "+OutputTable)
+    cur.execute("CREATE TABLE "+OutputTable+" AS SELECT * FROM "+InputTable1+" JOIN "+InputTable2+" ON 1=0")
+
+
+    cur.execute("SELECT MAX("+Table1JoinColumn+") FROM "+InputTable1+"")
+    maxval1=cur.fetchall()[0][0];
+    cur.execute("SELECT MIN("+Table1JoinColumn+") FROM "+InputTable1+"")
+    minval1=cur.fetchall()[0][0];
+
+    cur.execute("SELECT MAX("+Table2JoinColumn+") FROM "+InputTable2+"")
+    maxval2=cur.fetchall()[0][0];
+    cur.execute("SELECT MIN("+Table2JoinColumn+") FROM "+InputTable2+"")
+    minval2=cur.fetchall()[0][0];
+
+    minval=min(minval1,minval2);
+    maxval=max(maxval1,maxval2);
+
+    rangepartition(InputTable1, 5, Table1JoinColumn, minval, maxval, "one", openconnection)
+    rangepartition(InputTable2, 5, Table2JoinColumn, minval, maxval, "two", openconnection)
+
+    threads = []
+    for i in range(1, 6):
+        t = threading.Thread(target=parjoin, args=(i, "one", "two", InputTable1, InputTable2, Table1JoinColumn, Table2JoinColumn, OutputTable, openconnection,))
+        threads.append(t)
+        t.start()
+
+    print "Parallel Join Done. Check JoinedReults Table for results"
+    
+
 
 
 
@@ -239,7 +281,7 @@ if __name__ == '__main__':
             before_test_script_starts_middleware(con, DATABASE_NAME)
 
             # Here is where I will start calling your functions to test them. For example,
-            loadratings(RATINGS_TABLE_NAME, 'test_data.dat', con)
+            startProg(RATINGS_TABLE_NAME, 'test_data.dat', con)
             # ###################################################################################
             # Anything in this area will not be executed as I will call your functions directly
             # so please add whatever code you want to add in main, in the middleware functions provided "only"
